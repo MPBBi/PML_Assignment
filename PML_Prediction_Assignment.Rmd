@@ -1,0 +1,163 @@
+---
+title: "PML Prediction Assignment"
+author: "MP"
+date: "12/06/2021"
+output:
+  pdf_document: default
+  html_document: default
+   md_document:
+    variant: markdown_github
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Introduction
+
+Large amounts of data these days are collected on personal activity via devices like jawbone and fitbit. This allows people to easily quantify how much they do but not how well they do these activities.
+
+This report describes the approach and the building of the model of the analysis on predicting on the manner to which the exercises were performed.The prediction model will use data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants and then finally used against 20 test scenarios.The individuals were asked to perform barbell exercises correctly and incorrectly. 
+
+Data for this prediction model was taken from the below sites.
+http://groupware.les.inf.puc-rio.br/har
+
+The training data:
+https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv
+
+The test data:
+https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv
+
+Training, Test, Validation
+
+## Cleaning, splitting and exploring 
+Downloaded the data and placed it into working directory.
+```{r libraries}
+library(randomForest)
+library(rattle)
+library(e1071)
+library(lattice)
+library(ggplot2)
+library(caret)
+library(rpart)
+library(rpart.plot)
+library(tinytex)
+```
+
+```{r loading}
+training <- read.csv("C:/pml-training.csv", header=TRUE,sep=",")
+testing <- read.csv("C:/pml-testing.csv", header=TRUE,sep=",")
+
+```
+
+Before doing anything, quick over view of the training data. 
+```{r structure}
+str(training)
+
+```
+
+When doing regression or predictive modeling, we should only be using complete cases, removing any predictors with missing values and in some cases we can replace missing values with appropriate values to prevent too much loss of data that may affect the accuracy/outcome of the models.
+
+The str function above showed that the dataset contained a large number of NAs, so in this case we will remove these columns.
+```{r NA}
+training <- training[ , colSums(is.na(training)) == 0]
+
+```
+
+Also removing any zero or near zero numbers by using the nearZeroVar function available within the caret package. This will be a quick way for us get rid of predictors that are not very informative, this approach isn't always the best but we will use it in this case.     
+```{r NZV}
+NZVar <- nearZeroVar(training)
+training <- training[,-NZVar]
+```
+
+The first five columns wont be used in our analysis as they are identifiers and time stamps we don't need.    
+```{r ID}
+training <- training[,-(1:5)]
+```
+
+
+Now splitting the training data.Splitting into 75% used for training and 25% for testing. The testing data will be used later for the 20 test scenarios.
+```{r Split}
+inTrain  <- createDataPartition(training$classe, p=0.75, list=FALSE)
+TrainSet <- training[inTrain, ]
+TestSet  <- training[-inTrain, ]
+
+```
+
+
+```{r dim}
+dim(TrainSet)
+dim(TestSet)
+summary(TrainSet$classe)
+#boxplot(TrainSet$classe,col="blue")
+```
+
+
+## First Method - Predictive tree
+Using rpart package, rather than train function in caret as rattle package outputted an error that the object must be an rpart object.So using the rpart function to grow the decision tree and method is class for classifcation tree. 
+```{r dectree}
+set.seed(1379)
+#modFit <- train(classe ~ ., method ="rpart", data = TrainSet)
+#print(modFit$finalModel)
+#plot(modFit$finalModel)
+modFit <- rpart(classe ~ .,method="class",data=TrainSet)
+#plot(modFit, uniform = TRUE, main="Classification Tree for Classe")
+fancyRpartPlot(modFit) 
+```
+
+
+Now testing the model on the small test set that was partitioned from the original training set and then using the confusionMatrix function to examine the output of the model and outcomes of the predictions.
+```{r testingdectree}
+Predict <- predict(modFit, type="class",newdata=TestSet)
+DT <- confusionMatrix(Predict, as.factor(TestSet$classe))
+DT
+```
+
+## Second Method - Random Forest 
+This method generates many bootstrapped trees, similar to bagging in that we do bootstrap samples  but at each split only a subset of variables are considered. This allows us to grow a large number of prediction trees and average the predictions to get the predictive probability of each class.
+```{r RFprep}
+set.seed(1379)
+TC <- trainControl(method="cv", number = 5, verboseIter=FALSE) 
+## verboseIter False, do not want log.
+## we are setting the controls of the below model with the above variable
+modFitRF <- train(classe ~ ., data = TrainSet, method ="rf",trControl= TC, prox=TRUE)
+# removed getTree from run, to long to show
+#getTree(modFitRF$finalModel,k=3)
+```
+
+Random Forest Prediction 
+```{r RF}
+PredictRF <- predict(modFitRF, newdata=TestSet)
+RF <- confusionMatrix(PredictRF, as.factor(TestSet$classe))
+RF
+```
+
+
+## Third Method - Generalised Boost Method 
+This method is a combination of Decision Trees and Boosting, like Random forests it generates many trees but the random subset of data is selected using the boosting method, weighting heavier the missed data points in the previous tree modeling until the accuracy of the model is improved. 
+ 
+```{r Bostpred}
+set.seed(1379)
+modFitB <- train(classe ~ ., method= "gbm", data= TrainSet, verbose = FALSE)
+#print(modFitB)
+
+```
+
+Testing the model with the small TestSet we created earlier from Training data. 
+```{r Boostpred2}
+#qplot(predict(modFitB, TestSet),classe, data=TestSet)
+PredictGBM <- predict(modFitB, newdata=TestSet)
+GBM <- confusionMatrix(PredictGBM, as.factor(TestSet$classe))
+GBM
+```
+
+
+## Applying the chosen model on Test data
+So the prediction model of choice is Random Forest, out doing the Decision Tree and General Boost Method in accuracy. 
+Decision Tree - Accuracy 74.2%
+Random Forest - Accuracy 99.8%
+General Boost Method - Accuracy 98.8%
+
+```{r finalpred}
+predict(modFitRF, newdata= testing)
+```
